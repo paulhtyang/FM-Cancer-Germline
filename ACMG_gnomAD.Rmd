@@ -1,0 +1,218 @@
+---
+title: "Estimation of general population prevalence for gene-based germline mutations"
+output:html_notebook
+---
+Study the gnomAD variants based on ACMG and ClinVar annotations
+
+1. Initialization
+```{r}
+setwd("C:/Northwell/Research/Projects/CaGMFM/ClinVar/")
+```
+
+2. Data loading
+```{r}
+rm(list=ls())
+gc()
+gndt <- read.csv(file="./Archive/gnomad_WT1_all.csv")
+gndt <- gndt[!gndt$Allele.Count==0,] # revome the varants (RF/AC0)
+#pathoman <- gndt[,c("Chrom","Position", "Reference", 
+                    #"Alternate", "Allele.Count", "Allele.Number")]
+#write.table(pathoman,file="pm_input.txt",col.names = FALSE, sep=",", 
+            #quote = FALSE, row.names = FALSE)
+# select rar variants
+itv <- read.csv(file="ITV_WT1.csv", header = TRUE)
+```
+
+3. Select and match variants annotated by InterVar. Three selecting riteria has to match with each other: (a) Genomic location
+(b) Reference and (C) Alternative sequences at the variant, e.g. SNV, InDel
+```{r}
+# function for checking small deletion
+var.del <- function(y) {
+  del.ref <- as.character(y$Reference)
+  del.alt <- as.character(y$Alternate)
+  if (nchar(del.ref) > nchar(del.alt)) {
+    alt.seq <- substr(del.ref,1+nchar(del.alt),nchar(del.ref))
+    if (itv$Ref[i]==alt.seq) {
+      return(y)
+    } else {
+      return(NULL)
+    }           # outdt <- rbind(outdt,eachrc)
+  }
+}
+
+# function for checking small insersion
+var.ins <- function(x) {
+  del.ref <- as.character(x$Reference)
+  del.alt <- as.character(x$Alternate)
+  if (nchar(del.ref) < nchar(del.alt)) {
+    alt.seq <- substr(del.alt,1+nchar(del.ref),nchar(del.alt))
+    if (itv$Alt[i]==alt.seq) {
+      return(x)
+    } else {
+      return(NULL)
+    }
+  }       #outdt <- rbind(outdt,eachrc)
+}
+
+# function for SNV checking SNV
+var.snv <- function (z) {
+   del.ref <- as.character(z$Reference)
+   del.alt <- as.character(z$Alternate)
+   if ((nchar(del.ref) == 1) && (nchar(del.alt) == 1)) {
+     if (itv$Alt[i]==z$Alternate && itv$Ref[i]==z$Reference)
+       return(z)
+     else
+       return(NULL)
+   }
+}
+
+# Main codes
+rc <- dim(itv)[1]
+outdt <- NULL
+for (i in 1:rc) {
+  if (itv$Alt[i]=="-") { # small deletion variants
+    gpos <- itv$Start[i]-1 # relocate the position for small deletion variants
+    deldt <- gndt[gndt$Position==gpos,] # genomic location matching
+    checkpoint <- dim(deldt)[1]
+    if (checkpoint==1) { # check one or multiple records matched
+      eachrc <- var.del(deldt)
+      outdt <- rbind(outdt,eachrc) 
+    } else if (checkpoint>1) {
+      for (j in 1:checkpoint) {
+        eachrc <- var.del(deldt[j,])
+        outdt <- rbind(outdt,eachrc)
+      }
+    }
+  } else if (itv$Ref[i]=="-") { # insersion
+    deldt <- gndt[gndt$Position==itv$Start[i],]
+    checkpoint <- dim(deldt)[1]
+    if (checkpoint==1) {
+      eachrc <- var.ins(deldt)
+      outdt <- rbind(outdt,eachrc)
+    } else if (checkpoint>1) {
+      for (k in 1:checkpoint) {
+        eachrc <- var.ins(deldt[k,])
+        outdt <- rbind(outdt,eachrc)
+      }
+    }
+  } else { #SNV
+    deldt <- gndt[gndt$Position==itv$Start[i],]
+    checkpoint <- dim(deldt)[1]
+    if (checkpoint==1) {
+      eachrc <- var.snv(deldt)
+      outdt <- rbind(outdt,eachrc)
+    } else if (checkpoint>1) {
+      for (l in 1:checkpoint) {
+        eachrc <- var.snv(deldt[l,])
+        outdt <- rbind(outdt,eachrc)
+      }
+    }
+  }
+}
+```
+
+4. Output statistics
+```{r}
+outdt$Allele.Count
+outdt$Number.of.Homozygotes
+sum(outdt$Allele.Count)-sum(outdt$Number.of.Homozygotes)
+sum(round(outdt$Allele.Frequency*max(outdt$Allele.Number)))
+sum(round(outdt$Number.of.Homozygotes*
+            max(outdt$Allele.Number)/outdt$Allele.Number))
+max(outdt$Allele.Number)/2
+```
+
+5. Process the list of selected variations for Linkage Disequilibrium (LD) analysis
+```{r}
+var.loc <- paste0("chr",outdt$Chrom,":",outdt$Position,
+                  ":",outdt$Reference,":",outdt$Alternate)
+#var.loc <- paste0("chr",outdt$Chrom,":",outdt$Position)
+write.table(var.loc,file="var_loc.txt",col.names = FALSE, 
+            quote = FALSE, row.names = FALSE)
+# process the LD output dataset
+LD.ls <- read.csv(file="1821484192.csv")
+#remove the queried SNV itself
+LD.ls <- LD.ls[!LD.ls$SNP2.Pos %in% LD.ls$SNP1.Pos,] 
+intersect(LD.ls$SNP2.Pos,acgn$GRCh37Location)
+```
+
+6. Data analyitics and visualization
+```{r}
+Input =("
+Supplement        WT        Mutant
+'Cancer.PEDS'    3305         14
+'Cancer.AYA'     11190        23
+'Cancer.ADULT'   125134       184
+'Control.pop'    123058       35
+")
+
+### for staistical testing
+library(DescTools)
+Matriz <- as.matrix(read.table(textConnection(Input),
+                   header=TRUE, row.names=1))
+GTest(Matriz, correct="williams")    
+
+require(data.table)
+library(RVAideMemoire)
+
+G.test(Matriz)
+pairwise.G.test(Matriz, p.method = "bonferroni")
+
+### for data plotting
+Prostate <- read.table(textConnection(Input),header=TRUE)
+
+### Add sums and confidence intervals
+
+library(dplyr)
+
+Prostate <- mutate(Prostate, Sum = WT + Mutant)
+
+Prostate <- mutate(Prostate, Prop = Mutant / Sum,
+                   low.ci = apply(Prostate[c("Mutant", "Sum")], 1,
+                                  function(y) binom.test(y['Mutant'], y['Sum'])$ conf.int[1]),
+                   high.ci = apply(Prostate[c("Mutant", "Sum")], 1,
+                                   function(y) binom.test(y['Mutant'], y['Sum'])$ conf.int[2])
+                   )
+### Plot (Bar chart plot)
+
+library(ggplot2)
+my.order <- 1:4
+ggplot(Prostate, aes(x=reorder(Supplement, my.order), y=Prop)) + 
+  geom_bar(stat="identity", fill="gray40", 
+          colour="black", size=0.5, width=0.7) +
+  geom_errorbar(aes(ymax=high.ci, ymin=low.ci),
+                width=0.2, size=0.5, color="black") +
+  ggtitle("WT1") +
+  xlab("Subgroups in population") +
+  ylab("Genetic risk proportion") +
+  scale_x_discrete(labels=c("PEDS/cancer", "AYA/cancer",
+                            "ADULT/cancer","General population")) +
+ ## ggtitle("Main title") +
+  theme(plot.title = element_text(size=14, color = "black", face="bold", hjust = 0.5)) +
+  theme(axis.title = element_text(size=14, color = "black", face="bold",vjust=3)) +
+  theme(axis.text = element_text(size=12, color = "gray25", face="bold")) +
+  theme(axis.title.y = element_text(vjust= 1.8)) +
+  theme(axis.title.x = element_text(vjust= -0.5))
+```
+
+
+6. Build up a computational workflow to pipe up whole processes
+```{r}
+rm(list=ls())
+gc()
+itv_file.ls <- list.files(path="../../ClinVar/", pattern="ITV_")
+gnAD_file.ls <- list.files(path = "../../ClinVar/Archive/", pattern = "gnomad")
+source("FM_GM_Lib.R")
+gln <- length(itv_file.ls)
+AN.ls <- vector(mode="list", gln)
+for (ki in 1:gln) {
+  gndt <- read.csv(file=paste0("../../ClinVar/Archive/",gnAD_file.ls[ki]))
+  gndt <- gndt[!gndt$Allele.Count==0,] # revome the varants (RF/AC0)
+  gene <- unlist(strsplit(gnAD_file.ls[ki],"_"))[2]
+  itv <- read.csv(file=paste0("../../ClinVar/","ITV_",gene,".csv"), header = TRUE)
+  result <- var.match(itv, gndt)
+  AN.ls[[ki]] <- result$Allele.Number/2
+  names(AN.ls)[ki] <- gene
+}
+```
+
